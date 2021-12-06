@@ -1,5 +1,7 @@
 #!/bin/sh
 
+PROG=$0
+JQ="`dirname $PROG`/jq.pl"
 CMDNAME="check_proxmox"
 RC_OK=0
 RC_WARNING=1
@@ -12,7 +14,10 @@ PERF=0
 
 cookie() {
     DATA=`curl --silent --insecure --data "username=$USERNAME&password=$PASSWORD" $HOSTNAME/api2/json/access/ticket`
-    C=`echo $DATA | jq --raw-output '.data.ticket' | sed 's/^/PVEAuthCookie=/'`
+    #/bin/rm -f /tmp/cookie.json
+    #echo $DATA > /tmp/cookie.json
+    #C=`echo $DATA | jq --raw-output '.data.ticket' | sed 's/^/PVEAuthCookie=/'`
+    C=`echo $DATA | $JQ data ticket | sed 's/^/PVEAuthCookie=/'`
     echo $C
 }
 
@@ -24,7 +29,10 @@ doit() {
 
 memory_free() {
     RES=`doit $HOSTNAME/api2/json/nodes/$CLUSTER/status`
-    echo $RES | jq --raw-output '.data.memory.free'
+    #/bin/rm -f /tmp/memfree.json
+    #echo $RES > /tmp/memfree.json
+    #echo $RES | jq --raw-output '.data.memory.free'
+    echo $RES | $JQ data memory free
 }
 
 check_memory_free() {
@@ -57,12 +65,18 @@ check_memory_free() {
 
 running_qemu() {
     RES=`doit ${HOSTNAME}/api2/json/nodes/${CLUSTER}/qemu/${QEMUNODE}/status/current`
-    echo $RES | jq --raw-output  '.data.qmpstatus'
+    #/bin/rm -f /tmp/qemu.json
+    #echo $RES > /tmp/qemu.json
+    #echo $RES | jq --raw-output  '.data.qmpstatus'
+    echo $RES | $JQ data qmpstatus
 }
 
 running_lxc() {
     RES=`doit ${HOSTNAME}/api2/json/nodes/${CLUSTER}/lxc/${LXCNODE}/status/current`
-    echo $RES | jq --raw-output  '.data.status'
+    #/bin/rm -f /tmp/lxc.json
+    #echo $RES > /tmp/lxc.json
+    #echo $RES | jq --raw-output  '.data.status'
+    echo $RES | $JQ data status
 }
 
 check_running() {
