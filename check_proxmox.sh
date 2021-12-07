@@ -26,6 +26,7 @@ RC_UNKNOWN=3
 RC_DEPENDENT=4
 
 # Optional variables
+TIMEOUT=10
 DEBUG=0
 PERF=0
 
@@ -38,7 +39,11 @@ PERF=0
 # Return cookie data on stdout
 #
 cookie() {
-    DATA=`curl --silent --insecure --data "username=$USERNAME&password=$PASSWORD" $HOSTNAME/api2/json/access/ticket`
+    DATA=`curl --connect-timeout $TIMEOUT --silent --insecure --data "username=$USERNAME&password=$PASSWORD" $HOSTNAME/api2/json/access/ticket`
+    RC=$?
+    if [ $RC -ne 0 ]; then
+        return $RC
+    fi
     #C=`echo $DATA | jq --raw-output '.data.ticket' | sed 's/^/PVEAuthCookie=/'`
     C=`echo $DATA | $JQ data ticket | sed 's/^/PVEAuthCookie=/'`
     if [ $DEBUG -ne 0 ]; then
@@ -46,6 +51,7 @@ cookie() {
         /bin/rm -f /tmp/cookie.txt && echo $C > /tmp/cookie.txt
     fi
     echo $C
+    return 0
 }
 
 #
@@ -57,7 +63,16 @@ cookie() {
 doit() {
     URL=$1
     C=`cookie`
-    curl -s --insecure --cookie "${C}" "${URL}" 
+    RC=$?
+    if [ $RC -ne 0 ]; then
+        return $RC
+    fi
+    curl -s --connect-timeout $TIMEOUT --insecure --cookie "${C}" "${URL}" 
+    RC=$?
+    if [ $RC -ne 0 ]; then
+        return $RC
+    fi
+    return 0
 }
 
 #
