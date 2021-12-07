@@ -18,5 +18,7 @@ while ( <STDIN>  ) {
         $new = $new->{$_};
     }
 
-    print "$new\n";
+    if ( defined($new) ) {
+        print "$new\n";
+    }
 }

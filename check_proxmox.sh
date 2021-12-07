@@ -1,71 +1,116 @@
 #!/bin/sh
 
+##############################################
+#
+# Some global variables
+# It like the dark side of the moon:
+#
+# There is no dark side in the moon, really.
+# Matter of facts, it's all dark
+# The only thing that makes it look light
+# is the sun.
+#
+##############################################
+
+VERSION=20211207
 PROG=$0
-JQ="`dirname $PROG`/jq.pl"
-ZPOOL="`dirname $PROG`/zpool.pl"
-CMDNAME="check_proxmox"
+
+JQ="`dirname $PROG`/jq.pl"       # Small perl script to handle JSON output, inspired by jq
+ZPOOL="`dirname $PROG`/zpool.pl" # Small perl script to handle JSON output, inspired by jq
+
+# Op5 / Nagios return codes
 RC_OK=0
 RC_WARNING=1
 RC_CRITICAL=2
 RC_UNKNOWN=3
 RC_DEPENDENT=4
+
+# Optional variables
 DEBUG=0
 PERF=0
 
 
+#
+# A function that creates a cookie to be used in subsequent API calls
+# https://pve.proxmox.com/wiki/Proxmox_VE_API#Ticket_Cookie
+#
+# Requires USERNAME, PASSWORD and HOSTNAME variables
+# Return cookie data on stdout
+#
 cookie() {
     DATA=`curl --silent --insecure --data "username=$USERNAME&password=$PASSWORD" $HOSTNAME/api2/json/access/ticket`
     #C=`echo $DATA | jq --raw-output '.data.ticket' | sed 's/^/PVEAuthCookie=/'`
     C=`echo $DATA | $JQ data ticket | sed 's/^/PVEAuthCookie=/'`
     if [ $DEBUG -ne 0 ]; then
-    	/bin/rm -f /tmp/cookie.json
-    	echo $DATA > /tmp/cookie.json
-	/bin/rm -f /tmp/cookie.txt
-	echo $C > /tmp/cookie.txt
+    	/bin/rm -f /tmp/cookie.json && echo $DATA > /tmp/cookie.json
+        /bin/rm -f /tmp/cookie.txt && echo $C > /tmp/cookie.txt
     fi
     echo $C
 }
 
+#
+# The function that does it all, all for you.
+#
+# Requires URL as the first argument
+# Returns the output of the call
+#
 doit() {
     URL=$1
     C=`cookie`
     curl -s --insecure --cookie "${C}" "${URL}" 
 }
 
+#
+# Gets the zfs avail from a specified pool
+#
+# Requires HOSTNAME, CLUSTER and POOL variables
+# Returns the available size in pool
+#
 zfs_avail() {
     RES=`doit $HOSTNAME/api2/json/nodes/$CLUSTER/disks/zfs`
     AVAIL=`echo $RES | $ZPOOL $POOL free`
     if [ $DEBUG -ne 0 ]; then
-    	/bin/rm -f /tmp/zfs.json
-    	echo $RES > /tmp/zfs.json
-    	/bin/rm -f /tmp/zfs.avail
-    	echo $AVAIL > /tmp/zfs.avail
+    	/bin/rm -f /tmp/zfs.json && echo $RES > /tmp/zfs.json
+    	/bin/rm -f /tmp/zfs.avail && echo $AVAIL > /tmp/zfs.avail
     fi
     echo $AVAIL
 }
 
+
+
+#
+# Requires HOSTNAME, CLUSTER and POOL variables
+# Returns the health status of the pool ( if ok it's ONLINE )
+#
 zfs_online() {
     RES=`doit $HOSTNAME/api2/json/nodes/$CLUSTER/disks/zfs`
     ONLINE=`echo $RES | $ZPOOL $POOL health`
     if [ $DEBUG -ne 0 ]; then
-    	/bin/rm -f /tmp/online.json
-    	echo $RES > /tmp/online.json
-    	/bin/rm -f /tmp/online.txt
-    	echo $ONLINE > /tmp/online.txt
+    	/bin/rm -f /tmp/online.json && echo $RES > /tmp/online.json
+    	/bin/rm -f /tmp/online.txt && echo $ONLINE > /tmp/online.txt
     fi
     echo $ONLINE
 }
 
+#
+# Requires HOSTNAME and CLUSTER variables
+# Returns free memoro on the host node
 memory_free() {
     RES=`doit $HOSTNAME/api2/json/nodes/$CLUSTER/status`
     if [ $DEBUG -ne 0 ]; then
-    	/bin/rm -f /tmp/memfree.json
-    	echo $RES > /tmp/memfree.json
+    	/bin/rm -f /tmp/memfree.json && echo $RES > /tmp/memfree.json
     fi
     #echo $RES | jq --raw-output '.data.memory.free'
     echo $RES | $JQ data memory free
 }
 
+#
+# Check if free memory are within specifed constrains
+# Requires CRITICAL, WARNING, HOSTNAME
+#
+# This function exits with a status code, responding to 
+# the amount of free memory
+#
 check_memory_free() {
     FREE=`memory_free` 
     if [ $DEBUG != 0 ]; then
@@ -94,10 +139,17 @@ check_memory_free() {
     exit $RC
 }
 
+#
+# Check if helath of a pool is "ONLINE"
+# Requires HOSTNAME
+#
+# This function exits with a status code, responding to 
+# if the pool is "ONLINE" or not
+#
 check_zfs_online() {
     ONLINE=`zfs_online`
     if [ $DEBUG != 0 ]; then
-	echo "DEBUG check_zfs_online: $ONLINE"
+	    echo "DEBUG check_zfs_online: $ONLINE"
     fi
     if [ "${ONLINE}" = "" ]; then
         TEXT="CRITICAL: Unable to get data from $HOSTNAME: $ONLINE"
@@ -121,6 +173,13 @@ check_zfs_online() {
     exit $RC
 }
 
+#
+# Check if free space are within specifed constrains
+# Requires CRITICAL, WARNING, HOSTNAME and POOL
+#
+# This function exits with a status code, responding to 
+# the amount of free space
+#
 check_zfs_avail() {
     FREE=`zfs_avail`
     if [ $DEBUG != 0 ]; then
@@ -150,26 +209,39 @@ check_zfs_avail() {
     
 }
 
+# 
+# This function gets the running status of a qemu virtual machine
+# Requires HOSTNAME, CLUSTER and QEMUNODE
+# Returns running status
+#
 running_qemu() {
     RES=`doit ${HOSTNAME}/api2/json/nodes/${CLUSTER}/qemu/${QEMUNODE}/status/current`
     if [ $DEBUG -ne 0 ]; then
-    	/bin/rm -f /tmp/qemu.json
-    	echo $RES > /tmp/qemu.json
+    	/bin/rm -f /tmp/qemu.json && echo $RES > /tmp/qemu.json
     fi
     #echo $RES | jq --raw-output  '.data.qmpstatus'
     echo $RES | $JQ data qmpstatus
 }
 
+# 
+# This function gets the running status of a lxc container
+# Requires HOSTNAME, CLUSTER and LXCNODE
+# Returns running status
+#
 running_lxc() {
     RES=`doit ${HOSTNAME}/api2/json/nodes/${CLUSTER}/lxc/${LXCNODE}/status/current`
     if [ $DEBUG -ne 0 ]; then
-    	/bin/rm -f /tmp/lxc.json
-    	echo $RES > /tmp/lxc.json 
+    	/bin/rm -f /tmp/lxc.json && echo $RES > /tmp/lxc.json 
     fi
     #echo $RES | jq --raw-output  '.data.status'
     echo $RES | $JQ data status
 }
 
+#
+# This function cheks if a qemu vm or lxc container is running
+# Requires HOSTNAME, ( QEMUNODE or LXCNODE )
+# This function exits with a status code, responding to if 
+# the vm or container is in the running state
 check_running() {
     RUNNING=""
     if [ "${QEMUNODE}" != "" ]; then
@@ -209,35 +281,57 @@ check_running() {
     exit $RC
 }
 
+# 
+# Print som help on arguments to this fine script
+#
 show_help() {
     echo "Usage: $0 <args>"
-    echo "  -u  Api username, api@pve"
-    echo "  -p  Api password, secretpassword"
-    echo "  -w  Warning level, depending on check but 6000000000 is one"
     echo "  -c  Critical level, depending on check but 35000000000 is one"
     echo "  -C  Proxmox cluster name, example: proxmox"
-    echo "  -q  Qemu node ID, example: 2000"
-    echo "  -l  Lxc node ID, example: 1000"
-    echo "  -H  Proxmox hostname, example: https://192.168.0.1:8006"
+    echo "  -d  Debug"
     echo "  -h  This help"
-    echo "  -P  Include performance graphs"
-    echo "  -z  Zfs pool, example: rpool"
+    echo "  -H  Proxmox hostname, example: https://192.168.0.1:8006"
     echo "  -k  Which check"
     echo "      running"
     echo "      memfree"
     echo "      zfsavail (Default to pool vmpool, use -z to change)"
     echo "      zfsonline (Default to pool vmpool, use -z to change)"
+    echo "  -l  Lxc node ID, example: 1000"
+    echo "  -p  Api password, secretpassword"
+    echo "  -P  Include performance graphs"
+    echo "  -q  Qemu node ID, example: 2000"
+    echo "  -u  Api username, api@pve"
+    echo "  -w  Warning level, depending on check but 6000000000 is one"
+    echo "  -z  Zfs pool, example: rpool"
 }
 
+#
+# Check arguments, and assign correct values to variables
+#
 
-
-while getopts "u:Pp:C:w:c:q:l:k:H:hdz:" options; do
+while getopts "c:C:dhH:k:l:p:Pq:u:w:z:" options; do
     case "${options}" in
+        c)
+            CRITICAL=${OPTARG}
+            ;;
+        C)
+            CLUSTER=${OPTARG}
+            ;;
         d)
             DEBUG=1
             ;;
-        u)
-            USERNAME=${OPTARG}
+        h)
+            show_help
+            exit $RC_OK
+            ;;
+        H)
+            HOSTNAME=${OPTARG}
+            ;;
+        k)
+            CHECK=${OPTARG}
+            ;;
+        l)
+            LXCNODE=${OPTARG}
             ;;
         p)
             PASSWORD=${OPTARG}
@@ -245,73 +339,62 @@ while getopts "u:Pp:C:w:c:q:l:k:H:hdz:" options; do
         P)
             PERF=1
             ;;
-        w)
-            WARNING=${OPTARG}
-            ;;
-        c)
-            CRITICAL=${OPTARG}
-            ;;
-        C)
-            CLUSTER=${OPTARG}
-            ;;
         q)
             QEMUNODE=${OPTARG}
             ;;
-        l)
-            LXCNODE=${OPTARG}
+        u)
+            USERNAME=${OPTARG}
             ;;
-        k)
-            CHECK=${OPTARG}
+        w)
+            WARNING=${OPTARG}
             ;;
-        H)
-            HOSTNAME=${OPTARG}
-            ;;
-        h)
-            show_help
-            exit $RC_OK
-            ;;
- 	z)
-	    POOL=${OPTARG}
-	    ;;
+     	z)
+	        POOL=${OPTARG}
+	        ;;
     esac
 done
 
 #
-# Required arguments
+# Check for required arguments
 #
 
 if [ "${USERNAME}" = "" ]; then
-    echo "$CMDNAME: Missing -u (USERNAME)"
+    echo "$PROG: Missing -u (USERNAME)"
+    show_help
     exit $RC_CRITICAL
 fi
 
 if [ "${PASSWORD}" = "" ]; then
-    echo "$CMDNAME: Missing -p (PASSWORD)"
+    echo "$PROG: Missing -p (PASSWORD)"
+    show_help
     exit $RC_CRITICAL
 fi
 
 if [ "${HOSTNAME}" = "" ]; then
-    echo "$CMDNAME: Missing -H (HOSTNAME)"
+    echo "$PROG: Missing -H (HOSTNAME)"
+    show_help
     exit $RC_CRITICAL
 fi
 
 #if [ "${WARNING}" = "" ]; then
-#    echo "$CMDNAME: Missing -w (WARNING)"
+#    echo "$PROG: Missing -w (WARNING)"
 #    exit $RC_CRITICAL
 #fi
 
 #if [ "${CRITICAL}" = "" ]; then
-#    echo "$CMDNAME: Missing -c (CRITICAL)"
+#    echo "$PROG: Missing -c (CRITICAL)"
 #    exit $RC_CRITICAL
 #fi
 
 if [ "${CHECK}" = "" ]; then
-    echo "$CMDNAME: Missing -k (CHECK)"
+    echo "$PROG: Missing -k (CHECK)"
+    show_help
     exit $RC_CRITICAL
 fi
 
 if [ "${HOSTNAME}" = "" ]; then
-    echo "$CMDNAME: Missing -H (HOSTNAME)"
+    echo "$PROG: Missing -H (HOSTNAME)"
+    show_help
     exit $RC_CRITICAL
 fi
 
@@ -323,19 +406,26 @@ if [ "${POOL}" = "" ]; then
     POOL="vmpool"
 fi
 
+#
+# Print som debug info if we are debugging
+#
+
 if [ $DEBUG -ne 0 ]; then
     echo "Username: $USERNAME"
     echo "Password: $PASSWORD"
+    echo "Check: $CHECK"
     echo "Hostname: $HOSTNAME"
     echo "Cluster: $CLUSTER"
+    echo "Pool: $POOL"
     echo "Warning: $WARNING"
     echo "Critical: $CRITICAL"
-    echo "Check: $CHECK"
     echo "LXC Node: $LXCNODE"
     echo "QEMU Node: $QEMUNODE"
-    echo "Pool: $POOL"
 fi
 
+#
+# Which check do we want to execute
+#
 if [ "${CHECK}" = "running" ]; then
     check_running
 elif [ "${CHECK}" = "memfree" ]; then
@@ -345,3 +435,8 @@ elif [ "${CHECK}" = "zfsavail" ]; then
 elif [ "${CHECK}" = "zfsonline" ]; then
     check_zfs_online 
 fi
+
+# This should not happen
+
+echo "This should not happen"
+exit $RC_UNKNOWN
